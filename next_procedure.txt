@@ -1,0 +1,94 @@
+import pandas as pd
+import numpy as np
+import GPy
+import GPyOpt
+from sklearn.preprocessing import MinMaxScaler
+import os
+from calc_yield import calculate_yield  # calc_yield.py から関数をインポート
+
+def next_procedure(file_path='C:/Users/abcde/OneDrive/デスクトップ/Python_test/BO/API/table_utf8.csv'):
+    print("next_procedure関数が呼び出されました")  # デバッグ用プリント文
+    # パラメータの範囲
+    param_ranges = {
+        'Temp.': (20.0, 80.0),
+        'F.R.': (30.0, 120.0)
+    }
+
+    # データの読み込み
+    if os.path.exists(file_path):
+        try:
+            data = pd.read_csv(file_path)
+        except Exception as e:
+            print(f"ファイルの読み込み中にエラーが発生しました: {e}")
+            data = pd.DataFrame(columns=['entry'] + list(param_ranges.keys()) + ['Yield'])
+    else:
+        data = pd.DataFrame(columns=['entry'] + list(param_ranges.keys()) + ['Yield'])
+
+    # `entry` 列が存在しない場合、追加
+    if 'entry' not in data.columns:
+        data['entry'] = range(1, len(data) + 1)
+
+    # 収率計算を実行
+    yield_value = calculate_yield(file_path)
+    print(f"計算された収率: {yield_value}")
+
+    # 入力データの準備
+    input_columns = list(param_ranges.keys())
+    valid_data = data.dropna(subset=input_columns, how='all')
+
+    X = valid_data[input_columns].values if not valid_data.empty else np.array([])
+    Y = -valid_data['Yield'].values[:, np.newaxis] if not valid_data.empty else np.array([])
+
+    # 正規化の適用 (0～1 の範囲)
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    X_normalized = scaler.fit_transform(X) if X.size > 0 else np.empty((0, len(param_ranges)))
+
+    # ベイズ最適化の設定
+    bounds = [{'name': col, 'type': 'continuous', 'domain': (0.0, 1.0)} for col in input_columns]
+    kernel = GPy.kern.Matern52(input_dim=len(input_columns), variance=0.5, lengthscale=1.0)
+
+    optimizer = GPyOpt.methods.BayesianOptimization(
+        f=None,
+        domain=bounds,
+        X=X_normalized,
+        Y=Y,
+        model_type='GP',
+        kernel=kernel,
+        acquisition_type='EI'
+    )
+
+    # 次の試行点を提案
+    next_x_normalized = optimizer.suggest_next_locations()
+    next_x_original = scaler.inverse_transform(next_x_normalized)
+
+    # 提案された試行条件を辞書に変換
+    next_trial = {
+        'entry': int(data['entry'].max()) + 1 if not data.empty else 1,  # 次のentry番号
+        'Temp.': round(next_x_original[0][0], 1),  # Temp.の値
+        'F.R.': round(next_x_original[0][1], 1),  # F.R.の値
+        'Yield': 0  # 仮の応答値
+    }
+
+    # カラム順をCSVに合わせる
+    csv_columns = ['entry'] + list(param_ranges.keys()) + ['Yield']
+    next_trial_df = pd.DataFrame([next_trial], columns=csv_columns)
+
+    # データの保存処理
+    try:
+        if os.path.exists(file_path):
+            # ファイルが存在する場合、追記
+            next_trial_df.to_csv(file_path, mode='a', header=False, index=False)
+        else:
+            # ファイルが存在しない場合、新規作成
+            next_trial_df.to_csv(file_path, mode='w', header=True, index=False)
+        print(f"データが正常に保存されました: {file_path}")
+    except Exception as e:
+        print(f"保存中にエラーが発生しました: {e}")
+
+    return next_trial
+
+# 動作確認
+#if __name__ == "__main__":
+    #next_trial = next_procedure()
+    #print("次の試行条件:")
+    #print(next_trial)

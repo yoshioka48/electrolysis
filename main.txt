@@ -1,0 +1,50 @@
+from fastapi import FastAPI
+from next_procedure import next_procedure
+import pandas as pd
+import os
+import time
+
+req_cnt = 0
+
+app = FastAPI()
+
+@app.get("/api/experiments/next")
+async def next_step():
+    time.sleep(5)
+    global req_cnt
+    req_cnt += 1
+    try:
+        next_trial = next_procedure()
+        if next_trial is None:
+            req_cnt = 0
+            return {"error": "No next trial available"}
+
+        # CSV ファイルの読み取り
+        file_path = 'C:/Users/abcde/OneDrive/デスクトップ/Python_test/BO/API/table_utf8.csv'
+        if not os.path.exists(file_path):
+            return {"error": "CSV file not found"}
+
+        data = pd.read_csv(file_path)
+        if data.empty:
+            return {"error": "CSV file is empty"}
+
+        # 列名の確認
+        if 'Temp.' not in data.columns or 'F.R.' not in data.columns:
+            return {"error": "Temp. or F.R. column not found in CSV"}
+
+        # 最後の行の値を取得
+        latest_trial = data.iloc[-1]
+        temp_value = latest_trial['Temp.']
+        fr_value = latest_trial['F.R.']
+
+        # 次の手順をフォーマット
+        next_step = [
+            {"procedureOrder": 7, "usedDetail": f"{fr_value} mL/min"},
+            {"procedureOrder": 8, "usedDetail": f"{temp_value} °C"}
+        ]
+        return {"next_step": next_step}
+    except FileNotFoundError as e:
+        return {"error": f"File not found: {str(e)}"}
+    except Exception as e:
+        return {"error": f"An unexpected error occurred: {str(e)}"}
+
